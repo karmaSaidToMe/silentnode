@@ -1,68 +1,30 @@
 package main
 
 import (
-	"bufio"
+	"log"
 	"net"
-	"sync"
-
-	"github.com/google/uuid"
-	"go.uber.org/zap"
 )
 
 func main() {
-	var loggerConfig = zap.NewProductionConfig()
-	loggerConfig.Level.SetLevel(zap.DebugLevel)
+	s := newServer()
+	go s.run()
 
-	logger, err := loggerConfig.Build()
+	listener, err := net.Listen("tcp", ":8888")
 	if err != nil {
-		panic(err)
+		log.Fatalf("Не получается запустить сервер: \n%s", err.Error())
 	}
 
-	l, err := net.Listen("tcp", "localhost:9090")
-	if err != nil {
-		return
-	}
-
-	defer l.Close()
-
-	// Using sync.Map to not deal with concurrency slice/map issues
-	var connMap = &sync.Map{}
+	defer listener.Close()
+	log.Printf("Сервер запущен \nПорт :8888")
 
 	for {
-		conn, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			logger.Error("error accepting connection", zap.Error(err))
-			return
+			log.Printf("Не получается установить соединение с сервером: \n%s", err.Error())
+			continue
 		}
 
-		id := uuid.New().String()
-		connMap.Store(id, conn)
-
-		go handleUserConnection(id, conn, connMap, logger)
-	}
-}
-
-func handleUserConnection(id string, c net.Conn, connMap *sync.Map, logger *zap.Logger) {
-	defer func() {
-		c.Close()
-		connMap.Delete(id)
-	}()
-
-	for {
-		userInput, err := bufio.NewReader(c).ReadString('\n')
-		if err != nil {
-			logger.Error("error reading from client", zap.Error(err))
-			return
-		}
-
-		connMap.Range(func(key, value interface{}) bool {
-			if conn, ok := value.(net.Conn); ok {
-				if _, err := conn.Write([]byte(userInput)); err != nil {
-					logger.Error("error accepting connection", zap.Error(err))
-				}
-			}
-
-			return true
-		})
+		c := s.newClient(conn)
+		go c.readInput()
 	}
 }
